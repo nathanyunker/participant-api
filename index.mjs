@@ -213,6 +213,67 @@ async function getRandomParticipantPair() {
     }
 }
 
+
+
+
+const getParticipants = async (event) => {
+  const client = new DynamoDBClient({ region: 'us-east-1' });
+
+  const params = {
+    TableName: 'SiblingsGiftExchange',
+    IndexName: 'gsipk-gsisk-index',
+    KeyConditionExpression: '#pk = :pkVal AND begins_with(#sk, :skVal)',
+    ExpressionAttributeNames: {
+      '#pk': 'gsipk',
+      '#sk': 'gsisk',
+    },
+    ExpressionAttributeValues: {
+      ':pkVal': { S: 'participant' },
+      ':skVal': { S: 'participant' },
+    },
+  };
+
+  try {
+    let items = [];
+    let lastEvaluatedKey = null;
+
+    // Paginate through results if necessary
+    do {
+      const command = new QueryCommand({
+        ...params,
+        ExclusiveStartKey: lastEvaluatedKey,
+      });
+      const response = await client.send(command);
+
+      items = items.concat(response.Items.map(item => unmarshall(item)));
+      lastEvaluatedKey = response.LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+
+    // Transform items to return only the "Name" property
+    const result = items.map(item => ({ Name: item.name }));
+
+    // Return a successful API Gateway response
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result),
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*', // Enable CORS if needed
+      },
+    };
+  } catch (error) {
+    console.error('Error retrieving items from DynamoDB:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: `Error retrieving items: ${error.message}` }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+    };
+  }
+}
+
 // Main Lambda handler with route dispatching
 export const handler = async (event) => {
     console.log('----------this was hit-----------', event.routeKey);
@@ -220,7 +281,8 @@ export const handler = async (event) => {
     const routeKey = event.routeKey;
 
     const routes = {
-        "POST /paticpant/shuffle": getRandomParticipantPair
+        "GET /participant/shuffle": getRandomParticipantPair,
+        "GET /participants": getParticipants
     };
 
     const routeHandler = routes[routeKey];
