@@ -282,7 +282,7 @@ export const handler = async (event) => {
 
     const routes = {
         "GET /participant/shuffle": getRandomParticipantPair,
-        "GET /participants": getParticipants
+        "GET /participant": getParticipants
     };
 
     const routeHandler = routes[routeKey];
