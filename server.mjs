@@ -1,8 +1,10 @@
 import express from "express";
 import { handler } from "./index.mjs";
+import cors from 'cors';
 
 const app = express();
 app.use(express.json());
+app.use(cors()); 
 
 // Simulate API Gateway event structure
 const createEvent = (method, path, body, pathParams) => ({
@@ -12,34 +14,22 @@ const createEvent = (method, path, body, pathParams) => ({
   pathParameters: pathParams || {},
 });
 
-app.get("/paticpant/:exchangeId", async (req, res) => {
-  const event = createEvent("GET", "/paticpant/{exchangeId}", null, null);
+app.get("/participant/shuffle", async (req, res) => {
+  const event = createEvent("GET", "/participant/shuffle", null, null);
   const result = await handler(event);
   res.status(result.statusCode).json(JSON.parse(result.body));
 });
 
-app.post("/paticpant/pair", async (req, res) => {
-  const event = createEvent("POST", "/paticpant/pair", req.body);
+app.get("/participant/:exchangeId", async (req, res) => {
+  const event = createEvent("GET", "/participant/{exchangeId}", null, null);
   const result = await handler(event);
   res.status(result.statusCode).json(JSON.parse(result.body));
 });
 
-app.get("/paticpant/pairs/:exchangeId", async (req, res) => {
-  const event = createEvent("GET", "/paticpant/pairs/{exchangeId}", null, { name: req.params.exchangeId });
+app.post("/participant/exchange", async (req, res) => {
+  const event = createEvent("POST", "/participant/exchange", req.body, null);
   const result = await handler(event);
   res.status(result.statusCode).json(JSON.parse(result.body));
 });
 
-app.delete("/paticpant/pair/:id", async (req, res) => {
-  const event = createEvent("DELETE", "/paticpant/pair/{id}", null, { id: req.params.id });
-  const result = await handler(event);
-  res.status(result.statusCode).json(JSON.parse(result.body));
-});
-
-app.get("/paticpant/shuffle", async (req, res) => {
-  const event = createEvent("GET", "/paticpant/shuffle", null, null);
-  const result = await handler(event);
-  res.status(result.statusCode).json(JSON.parse(result.body));
-});
-
-app.listen(3000, () => console.log("Server running on http://localhost:3000"));
+app.listen(3001, () => console.log("Server running on http://localhost:3001"));
