@@ -1,35 +1,111 @@
-import { DynamoDBClient, QueryCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";  // ← low-level
+import { DynamoDBClient, QueryCommand, PutItemCommand, DeleteItemCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 
 const client = new DynamoDBClient({ region: "us-east-1" });
 
-// Utility function to convert DynamoDB item to plain JSON
-const unmarshallItem = (item) => {
-  const result = {};
-  for (const [key, value] of Object.entries(item)) {
-    if (value.S) result[key] = value.S; // Handle string values
-    if (value.L) result[key] = value.L.map((v) => v.S); // Handle list of strings
-  }
-  return result;
-};
-
-// Utility to create standard responses
 const createResponse = (statusCode, body) => ({
   statusCode,
   headers: {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
   },
   body: JSON.stringify(body),
 });
 
+async function getParticipantExchange(event) {
+  try {
+    const year = event.pathParameters?.exchangeId;
+
+    if (!year) {
+      return createResponse(400, { status: "error", message: "Missing required path parameter: exchangeId" });
+    }
+
+    const pk = `exchange#${year}`;
+
+    const params = {
+      TableName: "SiblingsGiftExchange",
+      KeyConditionExpression: "#pk = :pkVal",
+      ExpressionAttributeNames: { "#pk": "id" },
+      ExpressionAttributeValues: { ":pkVal": { S: pk } },
+    };
+
+    const command = new QueryCommand(params);
+    const response = await client.send(command);
+
+    if (!response.Items || response.Items.length === 0) {
+      return createResponse(404, { status: "not_found", message: `No exchange data found for year ${year}` });
+    }
+
+    // Usually there should be only one item for this PK
+    const item = unmarshall(response.Items[0]);
+
+    // Parse the pairs string back to array
+    if (item.pairs) {
+      item.pairs = JSON.parse(item.pairs);
+    }
+
+    return createResponse(200, {
+      status: "ok",
+      year: item.year,
+      pairs: item.pairs || [],
+      createdAt: item.createdAt,
+    });
+  } catch (error) {
+    console.error("Error fetching participant exchange:", error);
+    return createResponse(500, { status: "error", message: error.message });
+  }
+}
+
+async function deleteParticipantExchange(event) {
+  try {
+    const year = event.pathParameters?.exchangeId;
+
+    if (!year) {
+      return createResponse(400, { status: "error", message: "Missing required path parameter: exchangeId" });
+    }
+
+    const pk = `exchange#${year}`;
+
+    const params = {
+      TableName: "SiblingsGiftExchange",
+      Key: {
+        id: { S: pk },
+      },
+    };
+
+    const command = new DeleteItemCommand(params);
+    await client.send(command);
+
+    return createResponse(200, {
+      status: "ok",
+      message: `Exchange data for year ${year} deleted successfully`,
+    });
+  } catch (error) {
+    console.error("Error deleting participant exchange:", error);
+    return createResponse(500, { status: "error", message: error.message });
+  }
+}
+
 function randomizeParticipants(participants, previousPairs = []) {
-  // Sort participants by ageOrder ascending
-  const sortedParticipants = [...participants].sort((a, b) => a.ageOrder - b.ageOrder);
-  const available = [...participants]; // Copy for recipient selection
+  // Normalize `noMatch` entries and prepare participants
+  function normalizeNoMatch(noMatch) {
+      if (!noMatch) return [];
+      if (typeof noMatch === 'string') return [noMatch];
+      if (!Array.isArray(noMatch)) return [];
+      return noMatch.flat(Infinity).map(String).filter(Boolean);
+  }
+
+  const normalizedParticipants = participants.map(p => ({
+      ...p,
+      noMatch: normalizeNoMatch(p.noMatch || []),
+  }));
+
+  const sortedParticipants = [...normalizedParticipants].sort((a, b) => a.ageOrder - b.ageOrder);
+  const available = [...normalizedParticipants]; // Copy for recipient selection
   const pairs = [];
 
-  // Shuffle helper (Fisher-Yates)
   function shuffle(arr) {
       for (let i = arr.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
@@ -39,29 +115,27 @@ function randomizeParticipants(participants, previousPairs = []) {
   }
 
   // Check if a gifter-recipient pair is valid
-  function isValidPair(gifter, recipient, existingPairs) {
-      // Basic checks: no self-pairing and respects noMatch
-      if (
-          gifter.name === recipient.name || // No self-pairing
-          gifter.noMatch.includes(recipient.name) || // Gifter excludes recipient
-          recipient.noMatch.includes(gifter.name) // Recipient excludes gifter
-      ) {
-          return false;
-      }
+    function isValidPair(gifter, recipient, existingPairs) {
+      if (gifter.name === recipient.name) return false;
+
+      const gNoMatch = Array.isArray(gifter.noMatch) ? gifter.noMatch : [];
+      const rNoMatch = Array.isArray(recipient.noMatch) ? recipient.noMatch : [];
+
+      if (gNoMatch.includes(recipient.name) || rNoMatch.includes(gifter.name)) return false;
 
       // Check for reciprocal pair (e.g., gifter → recipient and recipient → gifter)
       for (const pair of existingPairs) {
           if (pair.gifter === recipient.name && pair.recipient === gifter.name) {
-              return false; // Reciprocal pair found
+              return false;
           }
       }
 
-      // Check against previousPairs for repeats
-      for (const prevPair of previousPairs) {
+        // Check against previousPairs for repeats
+        for (const prevPair of previousPairs) {
           if (prevPair.gifter === gifter.name && prevPair.recipient === recipient.name) {
-              return false; // Repeat pair found
+            return false;
           }
-      }
+        }
 
       return true;
   }
@@ -318,26 +392,31 @@ const setParticipantExchange = async (event) => {
   }
 }
 
-// Main Lambda handler with route dispatching
+// ────────────────────────────────────────────────
+//  Main Handler Function
+// ────────────────────────────────────────────────
 export const handler = async (event) => {
-    console.log('----------this was hit-----------', event.routeKey);
-    try {
+  console.log("----------this was hit-----------", event.routeKey);
+
+  try {
     const routeKey = event.routeKey;
 
     const routes = {
-        "GET /participant/shuffle": getRandomParticipantPair,
-        "GET /participant": getParticipants,
-        "POST /participant/exchange": setParticipantExchange
+      "GET /participant/shuffle": getRandomParticipantPair,
+      "GET /participant": getParticipants,
+      "POST /participant/exchange": setParticipantExchange,
+      "GET /participant/exchange/{exchangeId}": getParticipantExchange,
+      "DELETE /participant/exchange/{exchangeId}": deleteParticipantExchange,
     };
 
     const routeHandler = routes[routeKey];
     if (!routeHandler) {
-        return createResponse(404, { message: "Route not found" });
+      return createResponse(404, { message: "Route not found" });
     }
 
     return await routeHandler(event);
-    } catch (error) {
+  } catch (error) {
     console.error("Error processing request:", error);
     return createResponse(500, { message: "Internal server error", error: error.message });
-    }
+  }
 };

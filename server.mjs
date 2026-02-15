@@ -32,4 +32,16 @@ app.post("/participant/exchange", async (req, res) => {
   res.status(result.statusCode).json(JSON.parse(result.body));
 });
 
+app.get("/participant/exchange/:exchangeId", async (req, res) => {
+  const event = createEvent("GET", "/participant/exchange/{exchangeId}", null, { exchangeId: req.params.exchangeId });
+  const result = await handler(event);
+  res.status(result.statusCode).json(JSON.parse(result.body));
+});
+
+app.delete("/participant/exchange/:exchangeId", async (req, res) => {
+  const event = createEvent("DELETE", "/participant/exchange/{exchangeId}", null, { exchangeId: req.params.exchangeId });
+  const result = await handler(event);
+  res.status(result.statusCode).json(JSON.parse(result.body));
+});
+
 app.listen(3001, () => console.log("Server running on http://localhost:3001"));
